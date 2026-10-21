@@ -1,0 +1,61 @@
+name: Sign and Release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  sign-release:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Install build-tools
+        run: |
+          yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager "build-tools;34.0.0" 2>/dev/null || true
+
+      - name: Zipalign
+        run: |
+          BT=$(ls -d $ANDROID_SDK_ROOT/build-tools/* | sort -V | tail -1)
+          $BT/zipalign -v -p 4 Shadow_Gardem_Patched.apk aligned.apk
+
+      - name: Generate keystore
+        run: |
+          keytool -genkey -v \
+            -keystore my.keystore \
+            -alias key0 \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass password123 -keypass password123 \
+            -dname "CN=Dev,O=Dev,C=US"
+
+      - name: Sign
+        run: |
+          BT=$(ls -d $ANDROID_SDK_ROOT/build-tools/* | sort -V | tail -1)
+          $BT/apksigner sign \
+            --ks my.keystore --ks-key-alias key0 \
+            --ks-pass pass:password123 --key-pass pass:password123 \
+            --out Shadow_Gardem_Final.apk \
+            aligned.apk
+          $BT/apksigner verify Shadow_Gardem_Final.apk && echo "OK"
+
+      - name: Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="v$(date +%Y%m%d-%H%M%S)"
+          gh release create "$TAG" \
+            --title "Shadow Gardem $TAG" \
+            --notes "Patched: key check removed" \
+            Shadow_Gardem_Final.apk
